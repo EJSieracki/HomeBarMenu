@@ -1,0 +1,253 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  CREATOR
+  BARTENDER
+}
+
+enum IngredientCategory {
+  SPIRIT
+  MIXER
+  BITTER
+  SYRUP
+  JUICE
+  GARNISH
+  OTHER
+}
+
+enum GlassType {
+  COUPE
+  MARTINI
+  ROCKS
+  HIGHBALL
+  COLLINS
+  SHOT
+  FLUTE
+  WINE
+  PINT
+  MUG
+  TIKI
+  OTHER
+}
+
+// ─── Auth (NextAuth) ──────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          Role      @default(CREATOR)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+
+  bar             Bar?            @relation("BarOwner")
+  bartenderAt     BarStaff[]
+  createdRecipes  Recipe[]
+  createdVersions RecipeVersion[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Bar (tenant) ─────────────────────────────────────────────────────────────
+
+model Bar {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  logoUrl     String?
+  ownerId     String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User         @relation("BarOwner", fields: [ownerId], references: [id])
+  staff       BarStaff[]
+  recipes     Recipe[]
+  menus       Menu[]
+  ingredients Ingredient[]
+}
+
+model BarStaff {
+  id     String @id @default(cuid())
+  barId  String
+  userId String
+
+  bar  Bar  @relation(fields: [barId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([barId, userId])
+}
+
+// ─── Ingredients ──────────────────────────────────────────────────────────────
+
+model Ingredient {
+  id       String             @id @default(cuid())
+  name     String
+  category IngredientCategory @default(OTHER)
+  isGlobal Boolean            @default(false)
+  barId    String?
+
+  bar Bar? @relation(fields: [barId], references: [id], onDelete: Cascade)
+
+  recipeVersionIngredients RecipeVersionIngredient[]
+}
+
+// ─── Classic Cocktails (global seed library) ──────────────────────────────────
+
+model ClassicCocktail {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  glassType   GlassType @default(OTHER)
+  garnish     String?
+
+  recipes Recipe[]
+}
+
+// ─── Recipe ───────────────────────────────────────────────────────────────────
+
+model Recipe {
+  id                 String    @id @default(cuid())
+  barId              String
+  name               String
+  description        String?
+  glassType          GlassType @default(OTHER)
+  garnish            String?
+  isPublished        Boolean   @default(false)
+  baseClassicId      String?
+  clonedFromRecipeId String?
+  createdById        String
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  bar         Bar              @relation(fields: [barId], references: [id], onDelete: Cascade)
+  createdBy   User             @relation(fields: [createdById], references: [id])
+  baseClassic ClassicCocktail? @relation(fields: [baseClassicId], references: [id])
+  clonedFrom  Recipe?          @relation("RecipeClone", fields: [clonedFromRecipeId], references: [id])
+  clones      Recipe[]         @relation("RecipeClone")
+
+  versions  RecipeVersion[]
+  menuItems MenuItem[]
+}
+
+// ─── Recipe Versions ──────────────────────────────────────────────────────────
+
+model RecipeVersion {
+  id            String   @id @default(cuid())
+  recipeId      String
+  versionNumber Int
+  name          String?
+  notes         String?
+  isActive      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  createdById   String
+
+  recipe    Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  createdBy User   @relation(fields: [createdById], references: [id])
+
+  ingredients RecipeVersionIngredient[]
+  steps       RecipeVersionStep[]
+
+  @@unique([recipeId, versionNumber])
+}
+
+model RecipeVersionIngredient {
+  id              String  @id @default(cuid())
+  recipeVersionId String
+  ingredientId    String
+  amount          String
+  unit            String?
+  order           Int
+  notes           String?
+
+  recipeVersion RecipeVersion @relation(fields: [recipeVersionId], references: [id], onDelete: Cascade)
+  ingredient    Ingredient    @relation(fields: [ingredientId], references: [id])
+
+  @@unique([recipeVersionId, order])
+}
+
+model RecipeVersionStep {
+  id              String @id @default(cuid())
+  recipeVersionId String
+  stepNumber      Int
+  instruction     String
+
+  recipeVersion RecipeVersion @relation(fields: [recipeVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([recipeVersionId, stepNumber])
+}
+
+// ─── Menus ────────────────────────────────────────────────────────────────────
+
+model Menu {
+  id          String   @id @default(cuid())
+  barId       String
+  name        String
+  description String?
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  bar   Bar        @relation(fields: [barId], references: [id], onDelete: Cascade)
+  items MenuItem[]
+}
+
+model MenuItem {
+  id       String @id @default(cuid())
+  menuId   String
+  recipeId String
+  order    Int
+
+  menu   Menu   @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@unique([menuId, recipeId])
+}
